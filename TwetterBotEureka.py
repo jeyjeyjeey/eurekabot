@@ -49,7 +49,7 @@ def main():
     logging.basicConfig(
         filename=os.path.join(
             config.get("logging", "log_dir"),
-            '../log/{0}_{1}.log'.format(os.path.basename(__file__), datetime.now().strftime("%Y%m%d_%H%M%S"))),
+            '{0}_{1}.log'.format(os.path.basename(__file__), datetime.now().strftime("%Y%m%d_%H%M%S"))),
         level=config.getint("logging", "log_level"), format='%(asctime)s %(message)s')
 
     api = authenticate(config)
