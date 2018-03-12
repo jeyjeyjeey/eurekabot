@@ -616,7 +616,7 @@ def run_stream(api, stream, config):
                 except (Timeout, SSLError) as en:
                     continue
                 except Exception as eo:
-                    logging.error('unexpected error occur on retry:{:s}'.format(eo))
+                    logging.error('unexpected error occur on retry:{}'.format(eo))
                     exit(1)
             if stream is None:
                 logging.error('retry limit exceeded')
@@ -624,9 +624,9 @@ def run_stream(api, stream, config):
             else:
                 continue
         except tweepy.TweepError as te:
-            logging.error('tweep error occur:{:s}'.format(te))
+            logging.error('tweep error occur:{}'.format(te))
         except Exception as eo:
-            logging.error('unexpected error occur:{:s}'.format(eo))
+            logging.error('unexpected error occur:{}'.format(eo))
             # exit(1)
         # finally:
         #     if stream is not None:
