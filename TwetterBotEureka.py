@@ -117,10 +117,18 @@ class MyStreamListener(tweepy.StreamListener):
 
         if self._check_reply_to_my_tweet(status):
             logging.info('Reply to my tweet')
-            parent_tweet_status = self.api.get_status(status.in_reply_to_status_id)
-            grand_parent_tweet_status = self.api.get_status(parent_tweet_status.in_reply_to_status_id)
-            tw = self._pre_process(status)
-            target_tw = self._pre_process(grand_parent_tweet_status)
+            parent_tweet_status = None
+            grand_parent_tweet_status = None
+            tw = None
+            target_tw = None
+            try:  # tweep error occur:[{'code': 144, 'message': 'No status found with that ID.'}]
+                parent_tweet_status = self.api.get_status(status.in_reply_to_status_id)
+                grand_parent_tweet_status = self.api.get_status(parent_tweet_status.in_reply_to_status_id)
+            except tweepy.TweepError as te:
+                logging.error('(grand) parent tweets was deleted:{}'.format(te))
+            if grand_parent_tweet_status is parent_tweet_status is not None:
+                tw = self._pre_process(status)
+                target_tw = self._pre_process(grand_parent_tweet_status)
             tw = self._process_reply_to_my_tweet(tw, target_tw)
         elif self._check_reply_or_mention_to_me(status):
             logging.info('Reply or mention to me')
@@ -192,7 +200,10 @@ class MyStreamListener(tweepy.StreamListener):
     def _process_reply_to_my_tweet(self, tw, target_tw):
         text = str()
         tw.process_mode = C.MODE_THROUGH
-        if target_tw.user_id == tw.user_id:
+        if tw is None or target_tw is None:
+            tw = Tweet()
+            tw.process_mode = C.MODE_MOD_TWEET_NOT_FOUND
+        elif target_tw.user_id == tw.user_id:
             tw.process_mode = self._decision_process_mode_in_reply_my_tweet(tw)
             if tw.process_mode == C.MODE_MOD:
                 db = EurekaDbAccessor()
