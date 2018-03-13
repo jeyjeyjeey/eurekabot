@@ -134,7 +134,7 @@ class MyStreamListener(tweepy.StreamListener):
             logging.info('Reply or mention to me')
             tw = self._pre_process(status)
             tw = self._process_reply_to_me(tw)
-        elif self._contains_hashtags_stage(status):
+        elif self._check_air_reply_to_me(status):
             logging.info('Air reply to me')  # even if not a reply, she responds to tweets with hashtags and photos.
             tw = self._pre_process(status)
             tw = self._process_air_reply_to_me(tw)
@@ -175,21 +175,9 @@ class MyStreamListener(tweepy.StreamListener):
             elif tw.process_mode in (C.MODE_MP, C.MODE_GUILD_ERR_INVALID_HASHTAG, C.MODE_OTHER):
                 pass
         elif C.HASHTAG_BEST_SCORE in tw.hash_tags:
-            tw.process_mode = C.MODE_BEST_SCORE
-            db = EurekaDbAccessor()
-            db.prepare_connect(cf=self.dbcf)
-            tw.best_scores_list, tw.rec_exists = db.select_stage_scores(tw)
-            if not tw.rec_exists or len(tw.best_scores_list) == 0:
-                tw.process_mode = C.MODE_THROUGH
+            tw = self._show_best_score(tw)
         elif C.HASHTAG_STD_SCORE in tw.hash_tags:
-            tw.process_mode = C.MODE_STD_SCORE
-            db = EurekaDbAccessor()
-            db.prepare_connect(cf=self.dbcf)
-            tw.best_scores_list, tw.rec_exists = db.select_stage_scores(tw)
-            if tw.rec_exists and len(tw.best_scores_list) != 0:
-                tw.std_scores_dict = self._calculate_standard_scores(tw.best_scores_list)
-            else:
-                tw.process_mode = C.MODE_THROUGH
+            tw = self._show_std_score(tw)
 
         if tw.process_mode != C.MODE_THROUGH:
             text = self._assemble_text(tw)
@@ -265,6 +253,10 @@ class MyStreamListener(tweepy.StreamListener):
             else:
                 tw.process_mode = C.MODE_THROUGH
                 # no process: self.MODE_MP, self.MODE_GUILD_ERR_INVALID_HASHTAG, self.MODE_OTHER
+        elif C.HASHTAG_BEST_SCORE in tw.hash_tags:
+            tw = self._show_best_score(tw)
+        elif C.HASHTAG_STD_SCORE in tw.hash_tags:
+            tw = self._show_std_score(tw)
 
         if tw.process_mode != C.MODE_THROUGH:
             text = self._assemble_text(tw)
@@ -340,6 +332,11 @@ class MyStreamListener(tweepy.StreamListener):
         return True if self.me.id == status.in_reply_to_user_id and\
                        status.in_reply_to_status_id is not None else False
 
+    def _check_air_reply_to_me(self, status):
+        hashtags = self._extract_hashtags_from_status_as_list(status)
+        return True if self._contains_hashtags_stage(hashtags) or\
+                       C.HASHTAG_BEST_SCORE in hashtags or C.HASHTAG_STD_SCORE in hashtags else False
+
     def _decision_process_mode_with_photos(self, tw):
         process_mode = C.MODE_OTHER
         if tw.meta_ids_name is not None:
@@ -409,6 +406,26 @@ class MyStreamListener(tweepy.StreamListener):
         # save
         db.upsert_result(tw)
 
+        return tw
+
+    def _show_best_score(self, tw):
+        tw.process_mode = C.MODE_BEST_SCORE
+        db = EurekaDbAccessor()
+        db.prepare_connect(cf=self.dbcf)
+        tw.best_scores_list, tw.rec_exists = db.select_stage_scores(tw)
+        if not tw.rec_exists or len(tw.best_scores_list) == 0:
+            tw.process_mode = C.MODE_THROUGH
+        return tw
+
+    def _show_std_score(self, tw):
+        tw.process_mode = C.MODE_STD_SCORE
+        db = EurekaDbAccessor()
+        db.prepare_connect(cf=self.dbcf)
+        tw.best_scores_list, tw.rec_exists = db.select_stage_scores(tw)
+        if tw.rec_exists and len(tw.best_scores_list) != 0:
+            tw.std_scores_dict = self._calculate_standard_scores(tw.best_scores_list)
+        else:
+            tw.process_mode = C.MODE_THROUGH
         return tw
 
     def _assemble_text(self, tw):
@@ -512,9 +529,9 @@ class MyStreamListener(tweepy.StreamListener):
         return photo_urls
 
     @staticmethod
-    def _contains_hashtags_stage(status):
+    def _contains_hashtags_stage(hashtags):
         stage_contains = False
-        for hashtag in MyStreamListener._extract_hashtags_from_status_as_list(status):
+        for hashtag in hashtags:
             if hashtag in C.hashtag_corr_stage_dic.keys():
                 stage_contains = True
         return stage_contains
