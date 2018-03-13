@@ -414,13 +414,15 @@ class MyStreamListener(tweepy.StreamListener):
     def _assemble_text(self, tw):
         text = ''
         if tw.process_mode in (C.MODE_GUILD, C.MODE_HMHM):
-            text = self.serif_dict[tw.process_mode]["score"].format(tw.screen_name, tw.final_score)
+            text = self.serif_dict[tw.process_mode]["score"].format(tw.screen_name, tw.meta_ids_name,
+                                                                    C.hashtag_corr_mode_inv_dic[tw.stage_mode],
+                                                                    tw.final_score)
             if tw.sfq <= 0.5:
                 text += self.serif_dict[tw.process_mode]["sfq"].format(self._cut_off_sfq(tw.sfq*100))
             if tw.prev_final_score != 0:
                 text += self.serif_dict[tw.process_mode]["prev_score"].format(tw.prev_final_score)
             text += self.serif_dict[tw.process_mode]["estimate_score"]\
-                .format(tw.next_stage,
+                .format(tw.meta_ids_name,
                         self._convert_unit_of_score_to_k(tw.escr_dict[f"{tw.next_stage}_b"], k=True),
                         self._convert_unit_of_score_to_k(tw.escr_dict[f"{tw.next_stage}_n"], k=True, cap=95000)
                         )
