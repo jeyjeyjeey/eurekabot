@@ -389,13 +389,13 @@ class MyStreamListener(tweepy.StreamListener):
         for i in np.where(np.array(tw.photo_classes) == 'guild_battle')[0]:
             proc_images.append(tw.photos[i])
         scores, probas = MyStreamListener._ocr_score(proc_images)
-        if len(probas) ==0 or np.mean(probas) < 0.8:
+        if len(probas[0]) == 0 or np.mean(probas[0]) < 0.8:
             tw.process_mode = C.MODE_GUILD_ERR_INVALID_PHOTO
             return tw
 
         tw.final_score = scores[0]
         tw.total_score = scores[0]
-        tw.total_score_probas = probas
+        tw.total_score_probas = probas[0]
         logging.info('{}: {}'.format(tw.photo_urls, scores))
 
         # estimate_score(other_stage)
