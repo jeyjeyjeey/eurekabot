@@ -422,7 +422,7 @@ class MyStreamListener(tweepy.StreamListener):
             if tw.prev_final_score != 0:
                 text += self.serif_dict[tw.process_mode]["prev_score"].format(tw.prev_final_score)
             text += self.serif_dict[tw.process_mode]["estimate_score"]\
-                .format(tw.meta_ids_name,
+                .format(tw.next_stage,
                         self._convert_unit_of_score_to_k(tw.escr_dict[f"{tw.next_stage}_b"], k=True),
                         self._convert_unit_of_score_to_k(tw.escr_dict[f"{tw.next_stage}_n"], k=True, cap=95000)
                         )
