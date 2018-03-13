@@ -126,7 +126,7 @@ class MyStreamListener(tweepy.StreamListener):
                 grand_parent_tweet_status = self.api.get_status(parent_tweet_status.in_reply_to_status_id)
             except tweepy.TweepError as te:
                 logging.error('(grand) parent tweets was deleted:{}'.format(te))
-            if grand_parent_tweet_status is parent_tweet_status is not None:
+            if grand_parent_tweet_status is not None and parent_tweet_status is not None:
                 tw = self._pre_process(status)
                 target_tw = self._pre_process(grand_parent_tweet_status)
             tw = self._process_reply_to_my_tweet(tw, target_tw)
