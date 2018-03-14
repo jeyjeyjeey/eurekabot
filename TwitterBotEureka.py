@@ -19,7 +19,7 @@ import tweepy
 import cv2
 import numpy as np
 
-from gmot.gb.MvAnalyzer import clip_caputure, ajust_capture, ocr_total_score_cnn
+from gmot.gb.MvAnalyzer import clip_caputure, ajust_capture, ocr_total_score_cnn, ocr_end_score_cnn
 from mlsp.ml.CNNClassifierDigit import CNNClassifierDigit
 from mlsp.ml.CNNClassifierStaticObject import CNNClassifierStaticObject
 import eurekabot.Constants as C
@@ -629,7 +629,7 @@ class MyStreamListener(tweepy.StreamListener):
         imgs = clip_caputure(imgs)
         imgs = ajust_capture(imgs)
         for img in imgs:
-            score, _, _, proba_by_digit = ocr_total_score_cnn([img], MyStreamListener.digit_estimator_ts)
+            _, score, proba_by_digit = ocr_end_score_cnn([img], MyStreamListener.digit_estimator_es)
             scores.append(score)
             probas.append(proba_by_digit)
         return scores, probas
