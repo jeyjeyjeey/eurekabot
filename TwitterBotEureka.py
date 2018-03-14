@@ -58,20 +58,27 @@ def main():
 
 
 class MyStreamListener(tweepy.StreamListener):
-    digit_estimator = None
+    digit_estimator_ts = None
+    digit_estimator_es = None
     score_estimator = None
     melonpan_classifier = None
 
-    def __init__(self, api, ckpt_dir, weight_dir, db_config_file, serif_file):
+    def __init__(self, api, ckpt_dir_total_score, ckpt_dir_end_score, weight_dir, db_config_file, serif_file):
         super().__init__(api)
         self.__me = self.api.me()
         self.__dbcf = db_config_file
 
-        if MyStreamListener.digit_estimator is None:
+        if MyStreamListener.digit_estimator_ts is None:
             ts_clsfr = CNNClassifierDigit()
-            ts_clsfr.ckpt_dir = ckpt_dir
+            ts_clsfr.ckpt_dir = ckpt_dir_total_score
             ts_clsfr.prepare_classify()
-            MyStreamListener.digit_estimator = ts_clsfr
+            MyStreamListener.digit_estimator_ts = ts_clsfr
+
+        if MyStreamListener.digit_estimator_es is None:
+            es_clsfr = CNNClassifierDigit()
+            es_clsfr.ckpt_dir = ckpt_dir_end_score
+            es_clsfr.prepare_classify()
+            MyStreamListener.digit_estimator_es = es_clsfr
 
         if MyStreamListener.score_estimator is None:
             se = ScoreEstimator().prepare()
@@ -103,7 +110,7 @@ class MyStreamListener(tweepy.StreamListener):
 
     """
     event
-        these func is automatically called when twitter api push
+        these func are automatically called when twitter api push
     """
     def on_status(self, status):
         tw = None
@@ -126,6 +133,8 @@ class MyStreamListener(tweepy.StreamListener):
                 grand_parent_tweet_status = self.api.get_status(parent_tweet_status.in_reply_to_status_id)
             except tweepy.TweepError as te:
                 logging.error('(grand) parent tweets was deleted:{}'.format(te))
+                tw = Tweet()
+                tw.process_mode = C.MODE_MOD_UNIDENTIFY_SCORE
             if grand_parent_tweet_status is not None and parent_tweet_status is not None:
                 tw = self._pre_process(status)
                 target_tw = self._pre_process(grand_parent_tweet_status)
@@ -157,7 +166,7 @@ class MyStreamListener(tweepy.StreamListener):
 
     """
     sub event
-        these func is called from each events
+        these func are called from each events
     """
     def _process_reply_to_me(self, tw):
         text = str()
@@ -203,8 +212,8 @@ class MyStreamListener(tweepy.StreamListener):
                 if target_tw.rec_exists:
                     sid = f"{target_tw.meta_ids_name}_{target_tw.stage_mode}"
                     tw.sfq, tw.escr_dict = MyStreamListener._estimate_scores(sid, tw.final_score)
-                    if tw.sfq < 0.000001:
-                        tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
+                    # if tw.sfq < 0.00000001:
+                    #     tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
                     if tw.next_stage is None:
                         tw.next_stage = self._estimate_next_stage(target_tw)
                 else:
@@ -224,8 +233,8 @@ class MyStreamListener(tweepy.StreamListener):
                 if target_tw.rec_exists:
                     sid = f"{target_tw.meta_ids_name}_{target_tw.stage_mode}"
                     tw.sfq, tw.escr_dict = MyStreamListener._estimate_scores(sid, target_tw.final_score)
-                    if tw.sfq < 0.000001:
-                        tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
+                    # if tw.sfq < 0.00000001:
+                    #     tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
                     tw.next_stage = tw.meta_ids_name
                 else:
                     tw.process_mode = C.MODE_MOD_RECORD_NOT_FOUND
@@ -385,10 +394,12 @@ class MyStreamListener(tweepy.StreamListener):
         proc_images = []
         for i in np.where(np.array(tw.photo_classes) == 'guild_battle')[0]:
             proc_images.append(tw.photos[i])
-        scores, probas = MyStreamListener._ocr_score(proc_images)
+        scores, probas = MyStreamListener._ocr_score_total_score(proc_images)
         if len(probas[0]) == 0 or np.mean(probas[0]) < 0.8:
-            tw.process_mode = C.MODE_GUILD_ERR_INVALID_PHOTO
-            return tw
+            scores, probas = MyStreamListener._ocr_score_end_score(proc_images)
+            if len(probas[0]) == 0 or np.mean(probas[0]) < 0.8:
+                tw.process_mode = C.MODE_GUILD_ERR_INVALID_PHOTO
+                return tw
 
         tw.final_score = scores[0]
         tw.total_score = scores[0]
@@ -399,9 +410,9 @@ class MyStreamListener(tweepy.StreamListener):
         tw.sfq, tw.escr_dict = MyStreamListener._estimate_scores(sid, tw.final_score)
         if tw.next_stage is None:
             tw.next_stage = self._estimate_next_stage(tw)
-        if tw.sfq < 0.000001:
-            tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
-            return tw
+        # if tw.sfq < 0.00000001:
+        #     tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
+        #     return tw
 
         # save
         db.upsert_result(tw)
@@ -444,6 +455,7 @@ class MyStreamListener(tweepy.StreamListener):
                         self._convert_unit_of_score_to_k(tw.escr_dict[f"{tw.next_stage}_n"], k=True, cap=95000)
                         )
             text += random.choice(self.serif_dict["eos"]["tweet_list"]).format(tw.name)
+            text += self.serif_dict[tw.process_mode]["attention"].format(tw.name)
         elif tw.process_mode == C.MODE_MOD:
             text = self.serif_dict[tw.process_mode]["score"].format(tw.screen_name, tw.final_score)
             if tw.sfq <= 0.5:
@@ -569,7 +581,8 @@ class MyStreamListener(tweepy.StreamListener):
         return cvtd_scr
 
     @staticmethod
-    def _cut_off_sfq(sfq, scale_list=np.array([50, 40, 30, 25, 20, 15, 10, 8, 6, 5, 4, 2, 1, 0.5, 0.1, 0.05, 0.01])):
+    def _cut_off_sfq(sfq, scale_list=np.array(
+            [50, 40, 30, 25, 20, 15, 10, 8, 6, 5, 4, 2, 1, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001])):
         diff = scale_list - sfq
         abs_diff_min_index = np.argmin(abs(diff))
         return scale_list[abs_diff_min_index - 1] if diff[abs_diff_min_index] < 0 else scale_list[abs_diff_min_index]
@@ -600,12 +613,23 @@ class MyStreamListener(tweepy.StreamListener):
         return cv2.imdecode(np.frombuffer(raw_photo, dtype=np.uint8), cv2.cv2.IMREAD_COLOR)
 
     @staticmethod
-    def _ocr_score(imgs):
+    def _ocr_score_total_score(imgs):
         scores, probas = [], []
         imgs = clip_caputure(imgs)
         imgs = ajust_capture(imgs)
         for img in imgs:
-            score, _, _, proba_by_digit = ocr_total_score_cnn([img], MyStreamListener.digit_estimator)
+            score, _, _, proba_by_digit = ocr_total_score_cnn([img], MyStreamListener.digit_estimator_ts)
+            scores.append(score)
+            probas.append(proba_by_digit)
+        return scores, probas
+
+    @staticmethod
+    def _ocr_score_end_score(imgs):
+        scores, probas = [], []
+        imgs = clip_caputure(imgs)
+        imgs = ajust_capture(imgs)
+        for img in imgs:
+            score, _, _, proba_by_digit = ocr_total_score_cnn([img], MyStreamListener.digit_estimator_ts)
             scores.append(score)
             probas.append(proba_by_digit)
         return scores, probas
@@ -678,6 +702,7 @@ def create_stream(api, config):
     stream_listener = MyStreamListener(
         api,
         config.get("path", "CKPT_DATA_DIR_TOTAL_SCORE_CLFR"),
+        config.get("path", "CKPT_DATA_DIR_END_SCORE_CLFR"),
         config.get("path", "WEIGHT_DIR_MELONPAN_CLFR"),
         config.get("path", "DB_CONFIG_INI"),
         config.get("path", "SERIF_FILE")
