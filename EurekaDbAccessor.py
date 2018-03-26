@@ -66,7 +66,7 @@ class EurekaDbAccessor(DBAccessor):
                             GBTweet.meta_ids_name,
                             GBTweet.stage_mode
                         )
-                        .one())
+                        .all())
 
             if len(gb_tweet) != 0:
                 final_score = gb_tweet[0]
