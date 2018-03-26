@@ -69,7 +69,7 @@ class EurekaDbAccessor(DBAccessor):
                         .all())
 
             if len(gb_tweet) != 0:
-                final_score = gb_tweet[0]
+                final_score = gb_tweet[0][0]
             else:
                 rec_exists = False
         finally:

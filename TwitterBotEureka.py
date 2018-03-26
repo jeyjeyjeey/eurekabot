@@ -117,7 +117,7 @@ class MyStreamListener(tweepy.StreamListener):
         my_tw = None
         target_tw = None
         if status.author.id == self.me.id:
-            logging.debug('My tweet')
+            logging.info('My tweet')
             return
 
         if hasattr(status, 'retweeted_status'):
