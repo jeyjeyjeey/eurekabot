@@ -130,16 +130,19 @@ class MyStreamListener(tweepy.StreamListener):
             grand_parent_tweet_status = None
             try:  # tweep error occur:[{'code': 144, 'message': 'No status found with that ID.'}]
                 parent_tweet_status = self.api.get_status(status.in_reply_to_status_id)
-                grand_parent_tweet_status = self.api.get_status(parent_tweet_status.in_reply_to_status_id)
+                if parent_tweet_status.in_reply_to_status_id is not None:
+                    grand_parent_tweet_status = self.api.get_status(parent_tweet_status.in_reply_to_status_id)
             except tweepy.TweepError as te:
                 logging.error('(grand) parent tweets was deleted:{}'.format(te))
-                tw = Tweet()
-                tw.process_mode = C.MODE_MOD_ERR_UNIDENTIFY_SCORE
+            tw = self._pre_process(status)
             if grand_parent_tweet_status is not None and parent_tweet_status is not None:
-                tw = self._pre_process(status)
                 my_tw = self._pre_process(parent_tweet_status)
                 target_tw = self._pre_process(grand_parent_tweet_status)
-            tw = self._process_reply_to_my_tweet(tw, my_tw, target_tw)
+                tw = self._process_reply_to_my_tweet(tw, my_tw, target_tw)
+            elif parent_tweet_status is not None and parent_tweet_status.in_reply_to_status_id is None:
+                tw.process_mode = C.MODE_THROUGH
+            else:
+                tw.process_mode = C.MODE_MOD_DEL_ERR_TWEET_NOT_FOUND
         elif self._check_reply_or_mention_to_me(status):
             logging.info('Reply or mention to me')
             tw = self._pre_process(status)
@@ -223,11 +226,6 @@ class MyStreamListener(tweepy.StreamListener):
 
     def _process_reply_to_my_tweet(self, tw, my_tw, target_tw):
         tw.process_mode = C.MODE_THROUGH
-        if tw is None or target_tw is None:
-            tw = Tweet()
-            tw.process_mode = C.MODE_MOD_DEL_ERR_TWEET_NOT_FOUND
-            return tw
-
         if len(tw.photo_urls) != 0:
             tw.photos = self._http_request_photos(tw.photo_urls)
             if tw.photos is None:  # she does not respond, when attached files are not type/image.
@@ -366,7 +364,7 @@ class MyStreamListener(tweepy.StreamListener):
                        len(C.HASHTAG_BEST_SCORE_SET & set(hashtags)) > 0 or C.HASHTAG_STD_SCORE in hashtags else False
 
     def _chack_appply_mod_or_del(self, tw):
-        return re.match(u".*訂正.*", tw.text, re.U) or re.match(u".*(取り消し|取消|削除).*", tw.text, re.U)
+        return re.match(u".*(訂正|登録).*", tw.text, re.U) or re.match(u".*(取り消し|取消|削除).*", tw.text, re.U)
 
     def _decide_process_mode_with_photos(self, tw):
         process_mode = C.MODE_OTHER
@@ -390,19 +388,22 @@ class MyStreamListener(tweepy.StreamListener):
     def _decide_process_mode_in_reply_my_tweet(self, tw, my_tw, target_tw):
         process_mode = C.MODE_THROUGH
         if target_tw.meta_ids_name is not None:
-            if re.match(u".*訂正.*", tw.text, re.U):
+            if re.match(u".*(訂正|登録).*", tw.text, re.U):
                 match_str = re.findall(r"\d+", self._remove_meta_ids_name_from_text(tw), re.U)
                 if len(match_str) == 1:
-                    if re.match(u".*メロンパン.*", my_tw.text, re.U):
+                    if re.match(u".*メロンパンじゃないか.*", my_tw.text, re.U):
                         process_mode = C.MODE_WAIRO
                     else:
                         process_mode = C.MODE_MOD
                 else:
                     process_mode = C.MODE_MOD_ERR_UNIDENTIFY_SCORE
-        elif re.match(u".*(取り消し|取消|削除).*", tw.text, re.U):
-            process_mode = C.MODE_DELETE
-        elif tw.meta_ids_name is not None:
-            process_mode = C.MODE_ANOTHER_STAGE_ESTIMATE
+            elif re.match(u".*(取り消し|取消|削除).*", tw.text, re.U):
+                process_mode = C.MODE_DELETE
+            elif tw.meta_ids_name is not None:
+                process_mode = C.MODE_ANOTHER_STAGE_ESTIMATE
+        elif target_tw.meta_ids_name is None:
+            if re.match(u".*(取り消し|取消|削除).*", tw.text, re.U):
+                process_mode = C.MODE_DELETE
 
         return process_mode
 
