@@ -241,7 +241,9 @@ class MyStreamListener(tweepy.StreamListener):
                     db = EurekaDbAccessor()
                     db.prepare_connect(cf=self.dbcf)
 
-                    tw.final_score = self._convert_str_zen_to_han(re.findall(r"\d+", tw.text, re.U)[0])
+                    tw.final_score = self._convert_str_zen_to_han(
+                        re.findall(r"\d+", self._remove_meta_ids_name_from_text(tw), re.U)[0]
+                    )
 
                     target_tw.rec_exists = db.modify_final_score_with_tweet_id(tw, target_tw)
                     if target_tw.rec_exists is False:
@@ -519,25 +521,25 @@ class MyStreamListener(tweepy.StreamListener):
                         elif 'n' == bscr_dict['stage_mode']:
                             ns = bscr_dict['final_score']
                             ne = bscr_dict['is_score_edited']
-                text += "{stage}:{bscr}{editb}/{nscr}{editn}\n".format(
+                text += "{stage}:{bscr}/{nscr}\n".format(
                     stage=key,
                     bscr=self._convert_unit_of_score_to_k(bs),
-                    editb='*' if be == '1' else '',
                     nscr=self._convert_unit_of_score_to_k(ns),
-                    editn='*' if ne == '1' else ''
                 )
             text += self.serif_dict[tw.process_mode]["score_end"]
         elif tw.process_mode == C.MODE_STD_SCORE:
             text = self.serif_dict[tw.process_mode]["score_start"].format(tw.screen_name)
             for i, (key, value) in enumerate(C.hashtag_corr_stage_full_dic.items()):
+                if i == C.hashtag_corr_stage_workday_st_ind:
+                    text += '{}\n'.format(self.serif_dict[tw.process_mode]["workday_label"])
+                elif i == C.hashtag_corr_stage_holiday_st_ind:
+                    text += '{}\n'.format(self.serif_dict[tw.process_mode]["holiday_label"])
                 bs = tw.std_scores_dict.get(f"{value}_b")
                 ns = tw.std_scores_dict.get(f"{value}_n")
-                text += "{stage}:{bscr}{editb}/{nscr}{editn}\n".format(
+                text += "{stage}:{bscr}/{nscr}\n".format(
                     stage=key,
                     bscr=bs if bs is not None else '-',
-                    editb='*' if bs is not None and tw.best_scores_dict['is_score_edited'][f"{value}_b"] == '1' else '',
                     nscr=ns if ns is not None else '-',
-                    editn='*' if ns is not None and tw.best_scores_dict['is_score_edited'][f"{value}_n"] == '1' else ''
                 )
             text += self.serif_dict[tw.process_mode]["score_end"]
         elif tw.process_mode in (
