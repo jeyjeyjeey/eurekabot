@@ -36,7 +36,7 @@ def main():
     elif len(args) == 2:
         config_file = args[1]
     else:
-        print('arguments error/Usage:[config_file] [log_dir]')
+        print('ArgumentsError/Usage:[config_file]')
         exit(1)
 
     if not os.path.exists(config_file):
@@ -47,9 +47,9 @@ def main():
     config.read(config_file)
 
     logging.basicConfig(
-        filename=os.path.join(
-            config.get("logging", "log_dir"),
-            '{0}_{1}.log'.format(os.path.basename(__file__), datetime.now().strftime("%Y%m%d_%H%M%S"))),
+        # filename=os.path.join(
+        #     config.get("logging", "log_dir"),
+        #     '{0}_{1}.log'.format(os.path.basename(__file__), datetime.now().strftime("%Y%m%d_%H%M%S"))),
         level=config.getint("logging", "log_level"), format='%(asctime)s %(message)s')
 
     api = authenticate(config)
@@ -81,8 +81,8 @@ class MyStreamListener(tweepy.StreamListener):
             MyStreamListener.digit_estimator_es = es_clsfr
 
         if MyStreamListener.score_estimator is None:
-            se = ScoreEstimator().prepare()
-            MyStreamListener.score_estimator = se
+            scr_est = ScoreEstimator().prepare()
+            MyStreamListener.score_estimator = scr_est
 
         if MyStreamListener.melonpan_classifier is None:
             mp_clsfr = CNNClassifierStaticObject()
@@ -114,6 +114,8 @@ class MyStreamListener(tweepy.StreamListener):
     """
     def on_status(self, status):
         tw = None
+        my_tw = None
+        target_tw = None
         if status.author.id == self.me.id:
             logging.debug('My tweet')
             return
@@ -126,19 +128,18 @@ class MyStreamListener(tweepy.StreamListener):
             logging.info('Reply to my tweet')
             parent_tweet_status = None
             grand_parent_tweet_status = None
-            tw = None
-            target_tw = None
             try:  # tweep error occur:[{'code': 144, 'message': 'No status found with that ID.'}]
                 parent_tweet_status = self.api.get_status(status.in_reply_to_status_id)
                 grand_parent_tweet_status = self.api.get_status(parent_tweet_status.in_reply_to_status_id)
             except tweepy.TweepError as te:
                 logging.error('(grand) parent tweets was deleted:{}'.format(te))
                 tw = Tweet()
-                tw.process_mode = C.MODE_MOD_UNIDENTIFY_SCORE
+                tw.process_mode = C.MODE_MOD_ERR_UNIDENTIFY_SCORE
             if grand_parent_tweet_status is not None and parent_tweet_status is not None:
                 tw = self._pre_process(status)
+                my_tw = self._pre_process(parent_tweet_status)
                 target_tw = self._pre_process(grand_parent_tweet_status)
-            tw = self._process_reply_to_my_tweet(tw, target_tw)
+            tw = self._process_reply_to_my_tweet(tw, my_tw, target_tw)
         elif self._check_reply_or_mention_to_me(status):
             logging.info('Reply or mention to me')
             tw = self._pre_process(status)
@@ -148,9 +149,14 @@ class MyStreamListener(tweepy.StreamListener):
             tw = self._pre_process(status)
             tw = self._process_air_reply_to_me(tw)
 
-        if tw is not None and logging.DEBUG == logging.getLogger().getEffectiveLevel():
-            with open(f"./test_data/obj_status_{tw.process_mode}.pickle", 'wb') as pf:
-                pickle.dump(status, pf)
+        if tw is not None:
+            if tw.process_mode != C.MODE_THROUGH:
+                text = self._assemble_text(tw)
+                self.api.update_status(status=text, in_reply_to_status_id=tw.tweet_id)
+            if logging.DEBUG == logging.getLogger().getEffectiveLevel():
+                with open(f"./test_data/obj_status_{tw.process_mode}.pickle", 'wb') as pf:
+                    pickle.dump(status, pf)
+            del tw, my_tw, target_tw
 
         return
 
@@ -169,86 +175,30 @@ class MyStreamListener(tweepy.StreamListener):
         these func are called from each events
     """
     def _process_reply_to_me(self, tw):
-        text = str()
         tw.process_mode = C.MODE_OTHER
         if len(tw.photo_urls) != 0:
             tw.photos = self._http_request_photos(tw.photo_urls)
             if tw.photos is None:  # she does not respond, when attached files are not type/image.
+                tw.process_mode = C.MODE_THROUGH
                 return tw
             tw.photo_classes, probas = self._classify_images(tw.photos)
-            logging.debug('{}: {}'.format(tw.photo_classes, probas))
 
-            tw.process_mode = self._decision_process_mode_with_photos(tw)
-            if tw.process_mode in (C.MODE_GUILD, C.MODE_HMHM):
+            tw.process_mode = self._decide_process_mode_with_photos(tw)
+            if tw.process_mode == C.MODE_GUILD:
                 tw = self._analyse_guild_battle(tw)
-            elif tw.process_mode in (C.MODE_MP, C.MODE_GUILD_ERR_INVALID_HASHTAG, C.MODE_OTHER):
+            elif tw.process_mode in (C.MODE_MP, C.MODE_GUILD_ERR_INVALID_HASHTAG, C.MODE_WAIRO_TYOUDAI,
+                                     C.MODE_OTHER):
                 pass
-        elif C.HASHTAG_BEST_SCORE in tw.hash_tags:
+        elif len(C.HASHTAG_BEST_SCORE_SET & set(tw.hash_tags)) > 0:
             tw = self._show_best_score(tw)
         elif C.HASHTAG_STD_SCORE in tw.hash_tags:
             tw = self._show_std_score(tw)
-
-        if tw.process_mode != C.MODE_THROUGH:
-            text = self._assemble_text(tw)
-            self.api.update_status(status=text, in_reply_to_status_id=tw.tweet_id)
-
-        return tw
-
-    def _process_reply_to_my_tweet(self, tw, target_tw):
-        text = str()
-        tw.process_mode = C.MODE_THROUGH
-        if tw is None or target_tw is None:
-            tw = Tweet()
-            tw.process_mode = C.MODE_MOD_TWEET_NOT_FOUND
-        elif target_tw.user_id == tw.user_id:
-            tw.process_mode = self._decision_process_mode_in_reply_my_tweet(tw)
-            if tw.process_mode == C.MODE_MOD:
-                db = EurekaDbAccessor()
-                db.prepare_connect(cf=self.dbcf)
-
-                tw.final_score = self._convert_str_zen_to_han(re.findall(r"\d+", tw.text, re.U)[0])
-                target_tw.rec_exists = db.modify_final_score(tw, target_tw)
-
-                if target_tw.rec_exists:
-                    sid = f"{target_tw.meta_ids_name}_{target_tw.stage_mode}"
-                    tw.sfq, tw.escr_dict = MyStreamListener._estimate_scores(sid, tw.final_score)
-                    # if tw.sfq < 0.00000001:
-                    #     tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
-                    if tw.next_stage is None:
-                        tw.next_stage = self._estimate_next_stage(target_tw)
-                else:
-                    tw.process_mode = C.MODE_MOD_RECORD_NOT_FOUND
-            elif tw.process_mode == C.MODE_DELETE:
-                db = EurekaDbAccessor()
-                db.prepare_connect(cf=self.dbcf)
-                target_tw.rec_exists = db.delete_result(tw, target_tw)
-                if not target_tw.rec_exists:
-                    tw.process_mode = C.MODE_MOD_RECORD_NOT_FOUND
-            elif tw.process_mode == C.MODE_ANOTHER_STAGE_ESTIMATE:
-                db = EurekaDbAccessor()
-                db.prepare_connect(cf=self.dbcf)
-
-                target_tw.final_score, target_tw.rec_exists = db.select_specified_status_final_score(target_tw)
-
-                if target_tw.rec_exists:
-                    sid = f"{target_tw.meta_ids_name}_{target_tw.stage_mode}"
-                    tw.sfq, tw.escr_dict = MyStreamListener._estimate_scores(sid, target_tw.final_score)
-                    # if tw.sfq < 0.00000001:
-                    #     tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
-                    tw.next_stage = tw.meta_ids_name
-                else:
-                    tw.process_mode = C.MODE_MOD_RECORD_NOT_FOUND
-            elif tw.process_mode in (C.MODE_MOD_UNIDENTIFY_SCORE):
-                pass
-
-        if tw.process_mode != C.MODE_THROUGH:
-            text = self._assemble_text(tw)
-            self.api.update_status(status=text, in_reply_to_status_id=tw.tweet_id)
+        elif self._chack_appply_mod_or_del(tw):
+            tw.process_mode = C.MODE_MOD_DEL_ERR_MISTAKE_REPLY
 
         return tw
 
     def _process_air_reply_to_me(self, tw):
-        text = str()
         tw.process_mode = C.MODE_THROUGH
         if len(tw.photo_urls) != 0 and len(tw.hash_tags) != 0:
             tw.photos = self._http_request_photos(tw.photo_urls)
@@ -256,20 +206,90 @@ class MyStreamListener(tweepy.StreamListener):
                 return tw
             tw.photo_classes, probas = self._classify_images(tw.photos)
 
-            tw.process_mode = self._decision_process_mode_with_photos(tw)
-            if tw.process_mode in (C.MODE_GUILD, C.MODE_HMHM):
+            tw.process_mode = self._decide_process_mode_with_photos(tw)
+            if tw.process_mode == C.MODE_GUILD:
                 tw = self._analyse_guild_battle(tw)
+            elif tw.process_mode == C.MODE_WAIRO_TYOUDAI:
+                pass
             else:
                 tw.process_mode = C.MODE_THROUGH
-                # no process: self.MODE_MP, self.MODE_GUILD_ERR_INVALID_HASHTAG, self.MODE_OTHER
-        elif C.HASHTAG_BEST_SCORE in tw.hash_tags:
+                # no process: C.MODE_MP, C.MODE_GUILD_ERR_INVALID_HASHTAG, C.MODE_OTHER
+        elif len(C.HASHTAG_BEST_SCORE_SET & set(tw.hash_tags)) > 0:
             tw = self._show_best_score(tw)
         elif C.HASHTAG_STD_SCORE in tw.hash_tags:
             tw = self._show_std_score(tw)
 
-        if tw.process_mode != C.MODE_THROUGH:
-            text = self._assemble_text(tw)
-            self.api.update_status(status=text, in_reply_to_status_id=tw.tweet_id)
+        return tw
+
+    def _process_reply_to_my_tweet(self, tw, my_tw, target_tw):
+        tw.process_mode = C.MODE_THROUGH
+        if tw is None or target_tw is None:
+            tw = Tweet()
+            tw.process_mode = C.MODE_MOD_DEL_ERR_TWEET_NOT_FOUND
+            return tw
+
+        if len(tw.photo_urls) != 0:
+            tw.photos = self._http_request_photos(tw.photo_urls)
+            if tw.photos is None:  # she does not respond, when attached files are not type/image.
+                return tw
+            tw.photo_classes, probas = self._classify_images(tw.photos)
+
+            tw.process_mode = self._decide_process_mode_with_photos(tw)
+            if tw.process_mode in C.MODE_GUILD:
+                tw = self._analyse_guild_battle(tw)
+            elif tw.process_mode in (C.MODE_MP, C.MODE_WAIRO_TYOUDAI, C.MODE_GUILD_ERR_INVALID_HASHTAG,
+                                     C.MODE_OTHER):
+                pass
+        else:
+            if target_tw.user_id == tw.user_id:
+                tw.process_mode = self._decide_process_mode_in_reply_my_tweet(tw, my_tw, target_tw)
+                if tw.process_mode == C.MODE_MOD:
+                    db = EurekaDbAccessor()
+                    db.prepare_connect(cf=self.dbcf)
+
+                    tw.final_score = self._convert_str_zen_to_han(re.findall(r"\d+", tw.text, re.U)[0])
+
+                    target_tw.rec_exists = db.modify_final_score_with_tweet_id(tw, target_tw)
+                    if target_tw.rec_exists is False:
+                        tw.process_mode = C.MODE_MOD_ERR_RECORD_NOT_FOUND
+                    sid = f"{target_tw.meta_ids_name}_{target_tw.stage_mode}"
+                    tw.sfq, tw.escr_dict = self._estimate_scores(sid, tw.final_score)
+                    if tw.next_stage is None:
+                        tw.next_stage = self._estimate_next_stage(target_tw)
+                elif tw.process_mode == C.MODE_WAIRO:
+                    db = EurekaDbAccessor()
+                    db.prepare_connect(cf=self.dbcf)
+
+                    tw.final_score = self._convert_str_zen_to_han(
+                        re.findall(r"\d+", self._remove_meta_ids_name_from_text(tw), re.U)[0]
+                    )
+
+                    if tw.meta_ids_name is None:
+                        tw.meta_ids_name = target_tw.meta_ids_name
+                    tw.is_score_edited = '1'
+                    tw = db.insert_result(tw)
+                    sid = f"{target_tw.meta_ids_name}_{target_tw.stage_mode}"
+                    tw.sfq, tw.escr_dict = self._estimate_scores(sid, tw.final_score)
+                    if tw.next_stage is None:
+                        tw.next_stage = self._estimate_next_stage(target_tw)
+                elif tw.process_mode == C.MODE_DELETE:
+                    db = EurekaDbAccessor()
+                    db.prepare_connect(cf=self.dbcf)
+                    target_tw.rec_exists = db.delete_result(tw, target_tw)
+                    if not target_tw.rec_exists:
+                        tw.process_mode = C.MODE_DEL_ERR_RECORD_NOT_FOUND
+                elif tw.process_mode == C.MODE_ANOTHER_STAGE_ESTIMATE:
+                    db = EurekaDbAccessor()
+                    db.prepare_connect(cf=self.dbcf)
+                    target_tw.final_score, target_tw.rec_exists = db.select_best_final_score(target_tw)
+                    if target_tw.rec_exists:
+                        sid = f"{target_tw.meta_ids_name}_{target_tw.stage_mode}"
+                        tw.sfq, tw.escr_dict = MyStreamListener._estimate_scores(sid, target_tw.final_score)
+                        tw.next_stage = tw.meta_ids_name
+                    else:
+                        tw.process_mode = C.MODE_MOD_ERR_RECORD_NOT_FOUND
+                elif tw.process_mode in (C.MODE_MOD_ERR_UNIDENTIFY_SCORE):
+                    pass
 
         return tw
 
@@ -331,8 +351,7 @@ class MyStreamListener(tweepy.StreamListener):
         return tw
 
     """
-    tool func
-        common func, can be called everywhere
+    decision process
     """
     def _check_reply_or_mention_to_me(self, status):
         return self.me.id in MyStreamListener._extract_mentions_from_status_as_list(status)
@@ -343,18 +362,19 @@ class MyStreamListener(tweepy.StreamListener):
 
     def _check_air_reply_to_me(self, status):
         hashtags = self._extract_hashtags_from_status_as_list(status)
-        return True if self._contains_hashtags_stage(hashtags) or\
-                       C.HASHTAG_BEST_SCORE in hashtags or C.HASHTAG_STD_SCORE in hashtags else False
+        return True if self._contains_hashtags_stage(hashtags) or \
+                       len(C.HASHTAG_BEST_SCORE_SET & set(hashtags)) > 0 or C.HASHTAG_STD_SCORE in hashtags else False
 
-    def _decision_process_mode_with_photos(self, tw):
+    def _chack_appply_mod_or_del(self, tw):
+        return re.match(u".*訂正.*", tw.text, re.U) or re.match(u".*(取り消し|取消|削除).*", tw.text, re.U)
+
+    def _decide_process_mode_with_photos(self, tw):
         process_mode = C.MODE_OTHER
         if tw.meta_ids_name is not None:
-            if 'guild_battle' in tw.photo_classes and 'melonpan' in tw.photo_classes:
-                process_mode = C.MODE_HMHM
+            if 'melonpan' in tw.photo_classes:
+                process_mode = C.MODE_WAIRO_TYOUDAI
             elif 'guild_battle' in tw.photo_classes:
                 process_mode = C.MODE_GUILD
-            elif 'melonpan' in tw.photo_classes:
-                process_mode = C.MODE_MP
             else:
                 process_mode = C.MODE_OTHER
         elif tw.meta_ids_name is None:
@@ -367,14 +387,18 @@ class MyStreamListener(tweepy.StreamListener):
 
         return process_mode
 
-    def _decision_process_mode_in_reply_my_tweet(self, tw):
+    def _decide_process_mode_in_reply_my_tweet(self, tw, my_tw, target_tw):
         process_mode = C.MODE_THROUGH
-        if re.match(u".*訂正.*", tw.text, re.U):
-            match_str = re.findall(r"\d+", tw.text, re.U)
-            if len(match_str) == 1:
-                process_mode = C.MODE_MOD
-            else:
-                process_mode = C.MODE_MOD_UNIDENTIFY_SCORE
+        if target_tw.meta_ids_name is not None:
+            if re.match(u".*訂正.*", tw.text, re.U):
+                match_str = re.findall(r"\d+", self._remove_meta_ids_name_from_text(tw), re.U)
+                if len(match_str) == 1:
+                    if re.match(u".*メロンパン.*", my_tw.text, re.U):
+                        process_mode = C.MODE_WAIRO
+                    else:
+                        process_mode = C.MODE_MOD
+                else:
+                    process_mode = C.MODE_MOD_ERR_UNIDENTIFY_SCORE
         elif re.match(u".*(取り消し|取消|削除).*", tw.text, re.U):
             process_mode = C.MODE_DELETE
         elif tw.meta_ids_name is not None:
@@ -382,24 +406,29 @@ class MyStreamListener(tweepy.StreamListener):
 
         return process_mode
 
+    """
+    sub process
+    """
     def _analyse_guild_battle(self, tw):
         db = EurekaDbAccessor()
         db.prepare_connect(cf=self.dbcf)
 
         # check_prev_data
-        tw.prev_final_score, tw.rec_exists = db.select_prev_final_score(tw)
+        tw.prev_final_score, tw.rec_exists = db.select_best_final_score(tw)
 
         # estimate digit(this_score)
         sid = f"{tw.meta_ids_name}_{tw.stage_mode}"
         proc_images = []
         for i in np.where(np.array(tw.photo_classes) == 'guild_battle')[0]:
             proc_images.append(tw.photos[i])
-        scores, probas = MyStreamListener._ocr_score_total_score(proc_images)
+            proc_images = self._pre_process_imgs(proc_images)
+        scores, probas = self._ocr_score_total_score(proc_images)
         if len(probas[0]) == 0 or np.mean(probas[0]) < 0.8:
-            scores, probas = MyStreamListener._ocr_score_end_score(proc_images)
+            scores, probas = self._ocr_score_end_score(proc_images)
             if len(probas[0]) == 0 or np.mean(probas[0]) < 0.8:
                 tw.process_mode = C.MODE_GUILD_ERR_INVALID_PHOTO
                 return tw
+        del proc_images
 
         tw.final_score = scores[0]
         tw.total_score = scores[0]
@@ -407,15 +436,12 @@ class MyStreamListener(tweepy.StreamListener):
         logging.info('{}: {}'.format(tw.photo_urls, scores))
 
         # estimate_score(other_stage)
-        tw.sfq, tw.escr_dict = MyStreamListener._estimate_scores(sid, tw.final_score)
+        tw.sfq, tw.escr_dict = self._estimate_scores(sid, tw.final_score)
         if tw.next_stage is None:
             tw.next_stage = self._estimate_next_stage(tw)
-        # if tw.sfq < 0.00000001:
-        #     tw.process_mode = C.MODE_GUILD_ERR_ESTIMATE_SCORE
-        #     return tw
 
         # save
-        db.upsert_result(tw)
+        tw = db.insert_result(tw)
 
         return tw
 
@@ -441,14 +467,16 @@ class MyStreamListener(tweepy.StreamListener):
 
     def _assemble_text(self, tw):
         text = ''
-        if tw.process_mode in (C.MODE_GUILD, C.MODE_HMHM):
+        if tw.process_mode in (C.MODE_GUILD, C.MODE_WAIRO):
             text = self.serif_dict[tw.process_mode]["score"].format(tw.screen_name, tw.meta_ids_name,
                                                                     C.hashtag_corr_mode_inv_dic[tw.stage_mode],
                                                                     tw.final_score)
             if tw.sfq <= 0.5:
                 text += self.serif_dict[tw.process_mode]["sfq"].format(self._cut_off_sfq(tw.sfq*100))
-            if tw.prev_final_score != 0:
-                text += self.serif_dict[tw.process_mode]["prev_score"].format(tw.prev_final_score)
+            if tw.prev_final_score is not None and tw.prev_final_score != 0:
+                text += self.serif_dict[tw.process_mode]["prev_score"].format(
+                    tw.final_score if tw.final_score > tw.prev_final_score else tw.prev_final_score
+                )
             text += self.serif_dict[tw.process_mode]["estimate_score"]\
                 .format(tw.next_stage,
                         self._convert_unit_of_score_to_k(tw.escr_dict[f"{tw.next_stage}_b"], k=True),
@@ -475,7 +503,11 @@ class MyStreamListener(tweepy.StreamListener):
                         )
         elif tw.process_mode == C.MODE_BEST_SCORE:
             text = self.serif_dict[tw.process_mode]["score_start"].format(tw.screen_name)
-            for i, (key, value) in enumerate(C.hashtag_corr_stage_short_dic.items()):
+            for i, (key, value) in enumerate(C.hashtag_corr_stage_full_dic.items()):
+                if i == C.hashtag_corr_stage_workday_st_ind:
+                    text += '{}\n'.format(self.serif_dict[tw.process_mode]["workday_label"])
+                elif i == C.hashtag_corr_stage_holiday_st_ind:
+                    text += '{}\n'.format(self.serif_dict[tw.process_mode]["holiday_label"])
                 bs = None
                 be = None
                 ns = None
@@ -488,41 +520,44 @@ class MyStreamListener(tweepy.StreamListener):
                         elif 'n' == bscr_dict['stage_mode']:
                             ns = bscr_dict['final_score']
                             ne = bscr_dict['is_score_edited']
-                text += "{}:{}{}/{}{}".format(key,
-                                              self._convert_unit_of_score_to_k(bs),
-                                              '*' if be == '1' else '',
-                                              self._convert_unit_of_score_to_k(ns),
-                                              '*' if ne == '1' else '')
-                if i + 1 < len(C.hashtag_corr_stage_short_dic.items()):
-                    text += '|'
+                text += "{stage}:{bscr}{editb}/{nscr}{editn}\n".format(
+                    stage=key,
+                    bscr=self._convert_unit_of_score_to_k(bs),
+                    editb='*' if be == '1' else '',
+                    nscr=self._convert_unit_of_score_to_k(ns),
+                    editn='*' if ne == '1' else ''
+                )
             text += self.serif_dict[tw.process_mode]["score_end"]
         elif tw.process_mode == C.MODE_STD_SCORE:
             text = self.serif_dict[tw.process_mode]["score_start"].format(tw.screen_name)
-            for i, (key, value) in enumerate(C.hashtag_corr_stage_short_dic.items()):
+            for i, (key, value) in enumerate(C.hashtag_corr_stage_full_dic.items()):
                 bs = tw.std_scores_dict.get(f"{value}_b")
                 ns = tw.std_scores_dict.get(f"{value}_n")
-                text += "{}:{}{}/{}{}".format(key,
-                                              bs if bs is not None else '-',
-                                              '*' if bs is not None and
-                                                     tw.best_scores_dict['is_score_edited'][f"{value}_b"] == '1'
-                                              else '',
-                                              ns if ns is not None else '-',
-                                              '*' if ns is not None and
-                                                     tw.best_scores_dict['is_score_edited'][f"{value}_n"] == '1'
-                                              else '')
-                if i + 1 < len(C.hashtag_corr_stage_short_dic.items()):
-                    text += '|'
+                text += "{stage}:{bscr}{editb}/{nscr}{editn}\n".format(
+                    stage=key,
+                    bscr=bs if bs is not None else '-',
+                    editb='*' if bs is not None and tw.best_scores_dict['is_score_edited'][f"{value}_b"] == '1' else '',
+                    nscr=ns if ns is not None else '-',
+                    editn='*' if ns is not None and tw.best_scores_dict['is_score_edited'][f"{value}_n"] == '1' else ''
+                )
             text += self.serif_dict[tw.process_mode]["score_end"]
-        elif tw.process_mode in (C.MODE_GUILD_ERR_INVALID_HASHTAG, C.MODE_GUILD_ERR_INVALID_PHOTO,
-                                 C.MODE_GUILD_ERR_ESTIMATE_SCORE, C.MODE_MOD_UNIDENTIFY_SCORE,
-                                 C.MODE_MOD_RECORD_NOT_FOUND,
-                                 C.MODE_DELETE, C.MODE_MP, C.MODE_OTHER):
+        elif tw.process_mode in (
+            C.MODE_WAIRO_TYOUDAI, C.MODE_DELETE, C.MODE_MP, C.MODE_OTHER,
+            C.MODE_GUILD_ERR_INVALID_HASHTAG, C.MODE_GUILD_ERR_INVALID_PHOTO,
+            C.MODE_MOD_DEL_ERR_MISTAKE_REPLY, C.MODE_MOD_DEL_ERR_TWEET_NOT_FOUND,
+            C.MODE_MOD_ERR_RECORD_NOT_FOUND, C.MODE_DEL_ERR_RECORD_NOT_FOUND,
+            C.MODE_MOD_ERR_UNIDENTIFY_SCORE
+        ):
             text = random.choice(self.serif_dict[tw.process_mode]["tweet_list"]).format(tw.screen_name)
         elif tw.process_mode == C.MODE_THROUGH:
             pass
 
         return text
 
+    """
+    tool func
+        common func, can be called everywhere
+    """
     @staticmethod
     def _extract_mentions_from_status_as_list(status):
         return [hash_dic['id'] for hash_dic in status.entities['user_mentions']]
@@ -547,6 +582,13 @@ class MyStreamListener(tweepy.StreamListener):
             if hashtag in C.hashtag_corr_stage_dic.keys():
                 stage_contains = True
         return stage_contains
+
+    def _remove_meta_ids_name_and_photourl_from_text(self, tw):
+        return re.sub(r"https://t.*$", '', self._remove_meta_ids_name_from_text(tw))
+
+    @staticmethod
+    def _remove_meta_ids_name_from_text(tw):
+        return tw.text.replace(tw.meta_ids_name, '') if tw.meta_ids_name is not None else tw.text
 
     @staticmethod
     def _estimate_next_stage(tw):
@@ -576,7 +618,7 @@ class MyStreamListener(tweepy.StreamListener):
         if score is not None:
             if cap is not None and score > cap:
                 cvtd_scr = 'カンスト'
-            elif score > 1000:
+            elif 300000 > score > 1000:
                 cvtd_scr = "{}{}".format(round(score // 1000), 'k' if k else '')
         return cvtd_scr
 
@@ -600,23 +642,25 @@ class MyStreamListener(tweepy.StreamListener):
                 else:
                     logging.info("non-image Content-Type:{}".format(res.headers["content-type"]))
             except RequestException as re:
-                logging.error('requests error(url:{}) :{}'.format(url, str(re)))
+                logging.error('requests error(url:{}) :{}'.format(url, re))
 
         return photos
 
     @staticmethod
     def _convert_str_zen_to_han(str):
-        return unicodedata.normalize('NFKC', str)  # 'NFKD'だとひらがなカタカナ連結してくれないのよ
+        return unicodedata.normalize('NFKC', str)  # Dは濁点とかconcatしない
 
     @staticmethod
     def _convert_raw_photo(raw_photo):
         return cv2.imdecode(np.frombuffer(raw_photo, dtype=np.uint8), cv2.cv2.IMREAD_COLOR)
 
     @staticmethod
+    def _pre_process_imgs(imgs):
+        return ajust_capture(clip_caputure(imgs))
+
+    @staticmethod
     def _ocr_score_total_score(imgs):
         scores, probas = [], []
-        imgs = clip_caputure(imgs)
-        imgs = ajust_capture(imgs)
         for img in imgs:
             score, _, _, proba_by_digit = ocr_total_score_cnn([img], MyStreamListener.digit_estimator_ts)
             scores.append(score)
@@ -626,8 +670,6 @@ class MyStreamListener(tweepy.StreamListener):
     @staticmethod
     def _ocr_score_end_score(imgs):
         scores, probas = [], []
-        imgs = clip_caputure(imgs)
-        imgs = ajust_capture(imgs)
         for img in imgs:
             _, score, proba_by_digit = ocr_end_score_cnn([img], MyStreamListener.digit_estimator_es)
             scores.append(score)
@@ -649,7 +691,10 @@ class MyStreamListener(tweepy.StreamListener):
             resized_shape=(MyStreamListener.melonpan_classifier.input_x,
                            MyStreamListener.melonpan_classifier.input_y),
             normalization=True)
-        return MyStreamListener.melonpan_classifier.classify(np.array(samples))  # y, probas
+        photo_classes, probas = MyStreamListener.melonpan_classifier.classify(np.array(samples))
+        logging.debug('{}: {}'.format(photo_classes, probas))
+
+        return photo_classes, probas
 
 
 def run_stream(api, stream, config):

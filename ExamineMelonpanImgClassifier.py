@@ -21,6 +21,7 @@ def main():
         cv2.imread(os.path.join(clsfr.train_data_dir, 'sub_melonpan', 'melonpan_0735.jpeg')),
         cv2.imread(os.path.join(train_data_base, 'melonpan_verify', 'スクリーンショット 2018-01-09 21.41.10.png')),
         cv2.imread(os.path.join(train_data_base, 'melonpan_verify', 'IMG_2165.JPG')),
+        cv2.imread('/Users/jeey/Downloads/DYVrkIiUMAAuv4I.jpg-large.jpeg'),
         ]
     samples = clsfr.sample_image(samples, resized_shape=(clsfr.input_x, clsfr.input_y), normalization=True)
 

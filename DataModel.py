@@ -14,7 +14,8 @@ class Tweet:
         self.photos = list()
         self.photo_classes = list()
         self.rec_exists = None  # bool()
-        self.prev_final_score = int()
+        self.record_mode = None
+        self.__prev_final_score = int()
         self.mention_ids = list()
         self.sfq = float()
         self.escr_dict = dict()
@@ -29,8 +30,8 @@ class Tweet:
         self.tweet_id = str()
         self.post_date = str()
         self.hash_tags = list()
-        self.final_score = int()
-        self.total_score = int()
+        self.__final_score = int()
+        self.__total_score = int()
         self.total_score_probas = list()
         self.estimate_score_raw = dict()
         self.post_datetime = str()
@@ -70,3 +71,27 @@ class Tweet:
     @name.setter
     def name(self, value):
         self.__name = f"{value[:20]}..." if len(value) > 20 else value
+
+    @property
+    def prev_final_score(self):
+        return self.__prev_final_score
+
+    @prev_final_score.setter
+    def prev_final_score(self, value):
+        self.__prev_final_score = int(value)
+
+    @property
+    def final_score(self):
+        return self.__final_score
+
+    @final_score.setter
+    def final_score(self, value):
+        self.__final_score = int(value)
+
+    @property
+    def total_score(self):
+        return self.__total_score
+
+    @total_score.setter
+    def total_score(self, value):
+        self.__total_score = int(value)
