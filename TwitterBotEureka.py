@@ -138,11 +138,7 @@ class MyStreamListener(tweepy.StreamListener):
             if grand_parent_tweet_status is not None and parent_tweet_status is not None:
                 my_tw = self._pre_process(parent_tweet_status)
                 target_tw = self._pre_process(grand_parent_tweet_status)
-                tw = self._process_reply_to_my_tweet(tw, my_tw, target_tw)
-            elif parent_tweet_status is not None and parent_tweet_status.in_reply_to_status_id is None:
-                tw.process_mode = C.MODE_THROUGH
-            else:
-                tw.process_mode = C.MODE_MOD_DEL_ERR_TWEET_NOT_FOUND
+            tw = self._process_reply_to_my_tweet(tw, my_tw, target_tw)
         elif self._check_reply_or_mention_to_me(status):
             logging.info('Reply or mention to me')
             tw = self._pre_process(status)
@@ -238,7 +234,7 @@ class MyStreamListener(tweepy.StreamListener):
             elif tw.process_mode in (C.MODE_MP, C.MODE_WAIRO_TYOUDAI, C.MODE_GUILD_ERR_INVALID_HASHTAG,
                                      C.MODE_OTHER):
                 pass
-        else:
+        elif my_tw is not None and target_tw is not None:
             if target_tw.user_id == tw.user_id:
                 tw.process_mode = self._decide_process_mode_in_reply_my_tweet(tw, my_tw, target_tw)
                 if tw.process_mode == C.MODE_MOD:
@@ -288,6 +284,8 @@ class MyStreamListener(tweepy.StreamListener):
                         tw.process_mode = C.MODE_MOD_ERR_RECORD_NOT_FOUND
                 elif tw.process_mode in (C.MODE_MOD_ERR_UNIDENTIFY_SCORE):
                     pass
+        elif my_tw is None or target_tw is None:
+            tw.process_mode = C.MODE_MOD_DEL_ERR_TWEET_NOT_FOUND
 
         return tw
 
