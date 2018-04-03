@@ -3,7 +3,7 @@ Twitter bot manages personal scores in game-mode 'Guild Battle' of GOMAOTSU.
 This project is frozen now
 
 ## account
-@eureka_gmot
+[@eureka_gmot](https://twitter.com/eureka_gmot)
 
 ## attention
 1. use private package mlsp and gmot (my other repositries)
