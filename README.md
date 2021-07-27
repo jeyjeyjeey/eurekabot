@@ -6,6 +6,6 @@ This project is frozen now
 [@eureka_gmot](https://twitter.com/eureka_gmot)
 
 ## attention
-1. use private package mlsp and gmot (my other repositries)
+1. use package mlsp and gmot (my other repositries)
 2. 3 estimators(total score digit, end score digit, melonpan) have to be trained with images.
    Weight files are not contained in this repository.
